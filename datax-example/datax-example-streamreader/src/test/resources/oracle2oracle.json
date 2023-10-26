@@ -1,0 +1,57 @@
+{
+  "job": {
+    "setting": {
+      "speed": {
+        "channel": 3,
+        "byte": 1048576
+      },
+      "errorLimit": {
+        "record": 0,
+        "percentage": 0.02
+      }
+    },
+    "content": [
+      {
+        "reader": {
+          "name": "oraclereader",
+          "parameter": {
+            "username": "xx",
+            "password": "xx",
+            "splitPk": "",
+            "connection": [
+              {
+                "querySql": [
+                  "select LOGNO, TRANCOM, TRANNO from XXX where LOGNO=3236817"
+                ],
+                "jdbcUrl": [
+                  "jdbc:oracle:thin:@//127.0.0.1:1521/lis"
+                ]
+              }
+            ]
+          }
+        },
+        "writer": {
+          "name": "oraclewriter",
+          "parameter": {
+            "username": "pp",
+            "password": "pppp",
+            "column": [
+              "LOGNO",
+              "TRANCOM",
+              "TRANNO"
+            ],
+            "connection": [
+              {
+                "table": [
+                  "LIS_ONLTRANLOG"
+                ],
+                "jdbcUrl": "jdbc:oracle:thin:@//10.2.0.45:1521/prip"
+              }
+            ],
+            "writeMode": "update (LOGNO)"
+          }
+        }
+      }
+    ]
+  }
+}

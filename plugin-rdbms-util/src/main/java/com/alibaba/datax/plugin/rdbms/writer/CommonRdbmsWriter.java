@@ -12,6 +12,8 @@ import com.alibaba.datax.plugin.rdbms.util.DataBaseType;
 import com.alibaba.datax.plugin.rdbms.util.RdbmsException;
 import com.alibaba.datax.plugin.rdbms.writer.util.OriginalConfPretreatmentUtil;
 import com.alibaba.datax.plugin.rdbms.writer.util.WriterUtil;
+
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Triple;
@@ -266,9 +268,45 @@ public class CommonRdbmsWriter {
         public void startWriteWithConnection(RecordReceiver recordReceiver, TaskPluginCollector taskPluginCollector, Connection connection) {
             this.taskPluginCollector = taskPluginCollector;
 
+            // 以下代码为支持oracl update增量写数据
+            List<String> columns = new ArrayList<String>();
+            List<String> columnsOne = new ArrayList<String>();
+            List<String> columnsTwo = new ArrayList<String>();
+            if (this.dataBaseType == DataBaseType.Oracle && this.writeMode.trim().toLowerCase().startsWith("update")) {
+                String merge = this.writeMode;
+                String[] sArray = WriterUtil.getStrings(merge);
+                int size = this.columns.size();
+                int i = 0;
+                for (int j = 0; j < size; j++) {
+                    if (Arrays.asList(sArray).contains(this.columns.get(j))) {
+                        columnsOne.add(this.columns.get(j));
+                    }
+                }
+                for (int j = 0; j < size; j++) {
+                    if (!Arrays.asList(sArray).contains(this.columns.get(j))) {
+                        columnsTwo.add(this.columns.get(j));
+                    }
+                }
+                for (String column : columnsOne) {
+                    columns.add(i, column);
+                    i++;
+                }
+                for (String column : columnsTwo) {
+                    columns.add(i, column);
+                    i++;
+                }
+                columns.addAll(this.columns);
+                this.resultSetMetaData = DBUtil.getColumnMetaData(connection,
+                        this.table, StringUtils.join(columns, ","));
+            } else {
+                this.resultSetMetaData = DBUtil.getColumnMetaData(connection,
+                        this.table, StringUtils.join(this.columns, ","));
+            }
+            // oracal update增量写数据支持代码。over
+
             // 用于写入数据的时候的类型根据目的表字段类型转换
-            this.resultSetMetaData = DBUtil.getColumnMetaData(connection,
-                    this.table, StringUtils.join(this.columns, ","));
+//            this.resultSetMetaData = DBUtil.getColumnMetaData(connection,
+//                    this.table, StringUtils.join(this.columns, ","));
             // 写数据库的SQL语句
             calcWriteRecordSql();
 
@@ -353,11 +391,41 @@ public class CommonRdbmsWriter {
                 preparedStatement = connection
                         .prepareStatement(this.writeRecordSql);
 
-                for (Record record : buffer) {
-                    preparedStatement = fillPreparedStatement(
-                            preparedStatement, record);
-                    preparedStatement.addBatch();
+                // 以下代码为支持oracle update增量写数据
+                LOG.info("For {}",this.writeMode + "data to Oracle");
+                if (this.dataBaseType == DataBaseType.Oracle && this.writeMode.trim().toLowerCase().startsWith("update")) {
+                    String merge = this.writeMode;
+                    String[] sArray = WriterUtil.getStrings(merge);
+                    for (Record record : buffer) {
+                        List<Column> recordOne = new ArrayList<Column>();
+                        for (int j = 0; j < this.columns.size(); j++) {
+                            if (Arrays.asList(sArray).contains(this.columns.get(j))) {
+                                recordOne.add(record.getColumn(j));
+                            }
+                        }
+                        for (int j = 0; j < this.columns.size(); j++) {
+                            if (!Arrays.asList(sArray).contains(this.columns.get(j))) {
+                                recordOne.add(record.getColumn(j));
+                            }
+                        }
+                        for (int j = 0; j < this.columns.size(); j++) {
+                            recordOne.add(record.getColumn(j));
+                        }
+                        for (int j = 0; j < recordOne.size(); j++) {
+                            record.setColumn(j, recordOne.get(j));
+                        }
+                        preparedStatement = fillPreparedStatement(
+                                preparedStatement, record, this.writeMode);
+                        preparedStatement.addBatch();
+                    }
+                } else {
+                    for (Record record : buffer) {
+                        preparedStatement = fillPreparedStatement(
+                                preparedStatement, record);
+                        preparedStatement.addBatch();
+                    }
                 }
+                // 支持oracle update增量写数据代码。over
                 preparedStatement.executeBatch();
                 connection.commit();
             } catch (SQLException e) {
@@ -406,6 +474,18 @@ public class CommonRdbmsWriter {
             } finally {
                 DBUtil.closeDBResources(preparedStatement, null);
             }
+        }
+
+        // 为支持oracle update
+        protected PreparedStatement fillPreparedStatement(PreparedStatement preparedStatement, Record record, String writeMode)
+                throws SQLException {
+            for (int i = 0; i < record.getColumnNumber(); i++) {
+                int columnSqltype = this.resultSetMetaData.getMiddle().get(i);
+                String typeName = this.resultSetMetaData.getRight().get(i);
+                preparedStatement = fillPreparedStatementColumnType(preparedStatement, i, columnSqltype, typeName, record.getColumn(i));
+            }
+
+            return preparedStatement;
         }
 
         // 直接使用了两个类变量：columnNumber,resultSetMetaData
